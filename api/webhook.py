@@ -436,8 +436,8 @@ async def handle_update(bot: Bot, update: Update, request_host: str):
         return
 
     if text.startswith("/admin"):
-        fb_set(f"sessions/{chat_id}", {"step": "await_id"})
-        await bot.send_message(chat_id, "🔑 Admin ID kiriting:")
+        prompt = await bot.send_message(chat_id, "🔑 Admin ID kiriting:")
+        fb_set(f"sessions/{chat_id}", {"step": "await_id", "prompt_msg_id": prompt.message_id})
         await try_delete(bot, chat_id, message.message_id)
         return
 
@@ -449,13 +449,26 @@ async def handle_update(bot: Bot, update: Update, request_host: str):
     # ---------------- LOGIN BOSQICHLARI ----------------
 
     if step == "await_id":
-        fb_update(f"sessions/{chat_id}", {"step": "await_password", "temp_id": text})
-        await bot.send_message(chat_id, "🔒 Parolni kiriting:")
+        prompt = await bot.send_message(chat_id, "🔒 Parolni kiriting:")
+        # oldingi "ID kiriting" xabarini o'chiramiz
+        old_prompt_id = session.get("prompt_msg_id")
+        if old_prompt_id:
+            await try_delete(bot, chat_id, old_prompt_id)
+        fb_update(f"sessions/{chat_id}", {
+            "step": "await_password",
+            "temp_id": text,
+            "prompt_msg_id": prompt.message_id,
+        })
         await try_delete(bot, chat_id, message.message_id)
         return
 
     if step == "await_password":
         entered_id = session.get("temp_id", "")
+        # "Parolni kiriting" xabarini o'chiramiz
+        old_prompt_id = session.get("prompt_msg_id")
+        if old_prompt_id:
+            await try_delete(bot, chat_id, old_prompt_id)
+
         if entered_id == ADMIN_LOGIN_ID and text == ADMIN_LOGIN_PASSWORD:
             fb_set(f"sessions/{chat_id}", {"step": None})
             await send_admin_link(bot, chat_id, request_host)
