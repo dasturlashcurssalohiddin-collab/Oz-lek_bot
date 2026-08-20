@@ -61,9 +61,8 @@
     border-bottom: 2px solid var(--border);
     min-height: 48px;
   }
-  .delete-btn {
-    background: var(--red);
-    color: #fff;
+  .toolbar { gap: 10px; }
+  .delete-btn, .edit-btn {
     border: none;
     padding: 8px 16px;
     font-size: 15px;
@@ -72,8 +71,11 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    color: #fff;
   }
-  .delete-btn:hover { filter: brightness(0.92); }
+  .delete-btn { background: var(--red); }
+  .edit-btn { background: var(--navy); }
+  .delete-btn:hover, .edit-btn:hover { filter: brightness(0.92); }
 
   .row {
     padding: 18px 16px;
@@ -342,33 +344,68 @@ function renderToolbar() {
   const bar = document.getElementById("toolbar");
   bar.innerHTML = "";
   if (!selectedKey) return;
-  const btn = document.createElement("button");
-  btn.className = "delete-btn";
-  btn.innerHTML = "O'chirish 🗑️";
-  btn.onclick = async () => {
+
+  const editBtn = document.createElement("button");
+  editBtn.className = "edit-btn";
+  editBtn.innerHTML = "Tahrirlash ✏️";
+  editBtn.onclick = () => openEditView(selectedKey);
+  bar.appendChild(editBtn);
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "delete-btn";
+  delBtn.innerHTML = "O'chirish 🗑️";
+  delBtn.onclick = async () => {
     if (!confirm(`"${products[selectedKey].name}" o'chirilsinmi?`)) return;
     await fbDelete(`products/${selectedKey}`);
     loadList();
   };
-  bar.appendChild(btn);
+  bar.appendChild(delBtn);
 }
 
 // ============================================================
 // Yangi mahsulot qo'shish ko'rinishi
 // ============================================================
 let pickedImageBase64 = null;
+let editingKey = null; // null = yangi mahsulot qo'shish, aks holda tahrirlash
 
 function openAddView() {
+  editingKey = null;
   document.getElementById("list-view").style.display = "none";
   document.getElementById("add-view").style.display = "block";
   document.getElementById("addFab").style.display = "none";
   document.getElementById("name").value = "";
   document.getElementById("desc").value = "";
   document.getElementById("status-msg").textContent = "";
+  document.getElementById("saveBtn").textContent = "Saqlash";
   pickedImageBase64 = null;
   document.getElementById("preview").style.display = "none";
   document.getElementById("imgIcon").style.display = "block";
   document.getElementById("imgLabel").textContent = "Rasm qo'shing";
+}
+
+function openEditView(key) {
+  editingKey = key;
+  const product = products[key];
+  document.getElementById("list-view").style.display = "none";
+  document.getElementById("add-view").style.display = "block";
+  document.getElementById("addFab").style.display = "none";
+  document.getElementById("name").value = product.name || "";
+  document.getElementById("desc").value = product.description || "";
+  document.getElementById("status-msg").textContent = "";
+  document.getElementById("saveBtn").textContent = "Yangilash";
+
+  pickedImageBase64 = product.image_base64 || null;
+  const preview = document.getElementById("preview");
+  if (pickedImageBase64) {
+    preview.src = "data:image/jpeg;base64," + pickedImageBase64;
+    preview.style.display = "block";
+    document.getElementById("imgIcon").style.display = "none";
+    document.getElementById("imgLabel").textContent = "Rasmni almashtirish uchun bosing";
+  } else {
+    preview.style.display = "none";
+    document.getElementById("imgIcon").style.display = "block";
+    document.getElementById("imgLabel").textContent = "Rasm qo'shing";
+  }
 }
 
 document.getElementById("imgPicker").onclick = () => document.getElementById("fileInput").click();
@@ -413,11 +450,13 @@ document.getElementById("saveBtn").onclick = async () => {
   if (!name) { statusEl.textContent = "qabul qilinmadi❌ dori nomi kiritilmagan."; return; }
   if (!desc) { statusEl.textContent = "qabul qilinmadi❌ ma'lumot kiritilmagan."; return; }
 
-  const key = normalizeKey(name);
+  // Tahrirlashda mavjud kalit saqlanadi (nomi o'zgargan bo'lsa ham), aks holda
+  // nomdan yangi kalit hosil qilinadi.
+  const key = editingKey || normalizeKey(name);
   if (!key) { statusEl.textContent = "qabul qilinmadi❌ dori nomi noto'g'ri."; return; }
 
   document.getElementById("saveBtn").disabled = true;
-  statusEl.textContent = "Saqlanmoqda…";
+  statusEl.textContent = editingKey ? "Yangilanmoqda…" : "Saqlanmoqda…";
 
   const ok = await fbSet(`products/${key}`, {
     name: name,
