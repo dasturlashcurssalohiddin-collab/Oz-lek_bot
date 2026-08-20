@@ -150,6 +150,18 @@ def build_menu(products: dict):
     return InlineKeyboardMarkup(rows)
 
 
+MESSAGE_LIMIT = 4096  # Telegramning oddiy xabar uchun cheklovi
+
+
+async def send_long_text(bot: Bot, chat_id: int, text: str):
+    """Juda uzun matnni Telegram limitiga (4096) bo'lib yuboradi."""
+    for i in range(0, len(text), MESSAGE_LIMIT):
+        await bot.send_message(chat_id, text[i:i + MESSAGE_LIMIT])
+
+
+CAPTION_LIMIT = 1024  # Telegramning rasm ostidagi matn (caption) uchun cheklovi
+
+
 async def send_product(bot: Bot, chat_id: int, product: dict):
     caption = f"{product.get('name', '')}\n\n{product.get('description', '')}"
     image_b64 = product.get("image_base64")
@@ -159,14 +171,20 @@ async def send_product(bot: Bot, chat_id: int, product: dict):
             photo_bytes = base64.b64decode(image_b64)
             photo_file = io.BytesIO(photo_bytes)
             photo_file.name = "product.jpg"
-            await bot.send_photo(chat_id, photo_file, caption=caption)
+
+            if len(caption) <= CAPTION_LIMIT:
+                await bot.send_photo(chat_id, photo_file, caption=caption)
+            else:
+                # Caption juda uzun bo'lsa: rasm nomi bilan, matn alohida xabar(lar)da
+                await bot.send_photo(chat_id, photo_file, caption=product.get("name", ""))
+                await send_long_text(bot, chat_id, product.get("description", ""))
             return
         except Exception as e:
             print("Rasm yuborishda xato:", e)
-            await bot.send_message(chat_id, f"{caption}\n\n(⚠️ rasmni yuborib bo'lmadi)")
+            await send_long_text(bot, chat_id, f"{caption}\n\n(⚠️ rasmni yuborib bo'lmadi)")
             return
 
-    await bot.send_message(chat_id, caption)
+    await send_long_text(bot, chat_id, caption)
 
 
 def get_site_url(request_host: str) -> str:
