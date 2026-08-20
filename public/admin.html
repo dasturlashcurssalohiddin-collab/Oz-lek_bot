@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OZ-LEK — Admin panel</title>
+<style>
+  :root {
+    --border: #111;
+    --gray-bg: #d9d9d9;
+    --red: #e6402e;
+    --green: #3aa855;
+    --navy: #1c3f7a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #fff;
+    color: #111;
+  }
+
+  /* ---- Header ---- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--gray-bg);
+    border-bottom: 3px solid var(--border);
+    padding: 14px 20px;
+  }
+  .logo {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: #fff;
+    border: 3px solid var(--green);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: Georgia, serif;
+    font-weight: bold;
+    font-style: italic;
+    color: var(--navy);
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-size: 22px;
+    margin: 0;
+    font-weight: 600;
+  }
+
+  /* ---- List view ---- */
+  #list-view { display: none; }
+  .toolbar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    padding: 10px 16px;
+    border-bottom: 2px solid var(--border);
+    min-height: 48px;
+  }
+  .delete-btn {
+    background: var(--red);
+    color: #fff;
+    border: none;
+    padding: 8px 16px;
+    font-size: 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .delete-btn:hover { filter: brightness(0.92); }
+
+  .row {
+    padding: 18px 16px;
+    text-align: center;
+    font-size: 18px;
+    border-bottom: 2px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .row:hover { background: #f7f7f7; }
+  .row.selected { background: #fdeeec; font-weight: 600; }
+
+  .empty-msg {
+    padding: 40px 20px;
+    text-align: center;
+    color: #888;
+    font-size: 16px;
+  }
+
+  .fab {
+    position: fixed;
+    right: 20px;
+    bottom: 24px;
+    background: var(--navy);
+    color: #fff;
+    border: none;
+    padding: 16px 22px;
+    border-radius: 30px;
+    font-size: 16px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    cursor: pointer;
+  }
+  .fab:hover { filter: brightness(1.1); }
+
+  /* ---- Add product view ---- */
+  #add-view { display: none; }
+  .add-grid {
+    display: grid;
+    grid-template-columns: 1fr 260px;
+    min-height: calc(100vh - 84px);
+  }
+  @media (max-width: 640px) {
+    .add-grid { grid-template-columns: 1fr; }
+  }
+  .add-left {
+    display: flex;
+    flex-direction: column;
+  }
+  .name-field {
+    background: var(--gray-bg);
+    padding: 14px 16px;
+    font-size: 17px;
+    border: none;
+    border-bottom: 3px solid var(--border);
+    outline: none;
+    width: 100%;
+  }
+  .hint {
+    padding: 12px 16px;
+    color: #999;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  textarea#desc {
+    flex: 1;
+    resize: none;
+    border: none;
+    background: var(--gray-bg);
+    padding: 16px;
+    font-size: 17px;
+    font-family: inherit;
+    outline: none;
+    min-height: 260px;
+  }
+  .add-right {
+    background: var(--gray-bg);
+    border-left: 2px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 20px;
+    cursor: pointer;
+    text-align: center;
+  }
+  .add-right img {
+    max-width: 100%;
+    max-height: 220px;
+    border-radius: 6px;
+    display: none;
+  }
+  .img-icon { font-size: 44px; }
+
+  .bottom-bar {
+    display: flex;
+    gap: 10px;
+    padding: 14px 16px;
+    border-top: 2px solid var(--border);
+  }
+  .btn {
+    flex: 1;
+    padding: 14px;
+    font-size: 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .btn-save { background: var(--navy); color: #fff; }
+  .btn-cancel { background: #eee; color: #333; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+
+  #status-msg {
+    padding: 14px 16px;
+    font-size: 15px;
+  }
+
+  /* ---- Gate (token check) ---- */
+  #gate {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    text-align: center;
+    padding: 20px;
+    font-size: 17px;
+    color: #444;
+  }
+</style>
+</head>
+<body>
+
+<div id="gate">Tekshirilmoqda…</div>
+
+<div id="app" style="display:none;">
+  <header>
+    <div class="logo">LEK</div>
+    <h1>Dorilar menyusi</h1>
+  </header>
+
+  <div id="list-view">
+    <div class="toolbar" id="toolbar"></div>
+    <div id="rows"></div>
+  </div>
+
+  <div id="add-view">
+    <div class="add-grid">
+      <div class="add-left">
+        <input id="name" class="name-field" type="text" placeholder="Dorining nomini yozing">
+        <div class="hint">dori nomi yozilsa menyuda ham shu nom ko'rinadi. ma'lumot qismiga joy kam ko'rinadi, lekin cheksiz yozish mumkin.</div>
+        <textarea id="desc" placeholder="Ma'lumot kiriting"></textarea>
+      </div>
+      <div class="add-right" id="imgPicker">
+        <img id="preview">
+        <div class="img-icon" id="imgIcon">🖼️</div>
+        <div id="imgLabel">Rasm qo'shing</div>
+        <input type="file" id="fileInput" accept="image/*" style="display:none;">
+      </div>
+    </div>
+    <div id="status-msg"></div>
+    <div class="bottom-bar">
+      <button class="btn btn-cancel" id="cancelBtn">Bekor qilish</button>
+      <button class="btn btn-save" id="saveBtn">Saqlash</button>
+    </div>
+  </div>
+</div>
+
+<button class="fab" id="addFab" style="display:none;">+ Yangi dori qo'shish</button>
+
+<script>
+// ============================================================
+// SOZLAMALAR — o'zingizning Firebase manzilingiz
+// ============================================================
+const FIREBASE_DB_URL = "https://oz-lek-default-rtdb.asia-southeast1.firebasedatabase.app";
+const TOKEN_TTL_MS = 30 * 60 * 1000; // token 30 daqiqa amal qiladi
+
+// ============================================================
+// Yordamchi funksiyalar
+// ============================================================
+function normalizeKey(text) {
+  const map = {а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ё:"yo",ж:"j",з:"z",и:"i",й:"y",
+    к:"k",л:"l",м:"m",н:"n",о:"o",п:"p",р:"r",с:"s",т:"t",у:"u",ф:"f",х:"x",
+    ц:"ts",ч:"ch",ш:"sh",щ:"sh",ъ:"",ь:"",э:"e",ю:"yu",я:"ya",ў:"o",қ:"q",ғ:"g",ҳ:"h"};
+  let out = "";
+  for (const ch of text.toLowerCase()) out += map[ch] ?? ch;
+  return out.replace(/[^a-z0-9]/g, "");
+}
+
+async function fbGet(path) {
+  const r = await fetch(`${FIREBASE_DB_URL}/${path}.json`);
+  if (!r.ok) return null;
+  return r.json();
+}
+async function fbSet(path, data) {
+  const r = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
+    method: "PUT", body: JSON.stringify(data)
+  });
+  return r.ok;
+}
+async function fbDelete(path) {
+  const r = await fetch(`${FIREBASE_DB_URL}/${path}.json`, { method: "DELETE" });
+  return r.ok;
+}
+
+// ============================================================
+// Kirish nazorati (token telegram botdan keladi)
+// ============================================================
+async function checkAccess() {
+  const params = new URLSearchParams(location.search);
+  const token = params.get("token");
+  const gate = document.getElementById("gate");
+
+  if (!token) {
+    gate.textContent = "Ruxsat yo'q. Telegram botga qaytib /admin yozing.";
+    return false;
+  }
+  const record = await fbGet(`admin_tokens/${token}`);
+  if (!record || !record.created || (Date.now() - record.created > TOKEN_TTL_MS)) {
+    gate.textContent = "Sessiya tugagan yoki noto'g'ri. Telegram botga qaytib /admin yozing.";
+    return false;
+  }
+  gate.style.display = "none";
+  document.getElementById("app").style.display = "block";
+  document.getElementById("addFab").style.display = "block";
+  return true;
+}
+
+// ============================================================
+// Ro'yxat ko'rinishi
+// ============================================================
+let selectedKey = null;
+let products = {};
+
+async function loadList() {
+  document.getElementById("add-view").style.display = "none";
+  document.getElementById("list-view").style.display = "block";
+  document.getElementById("addFab").style.display = "block";
+  selectedKey = null;
+  renderToolbar();
+
+  products = (await fbGet("products")) || {};
+  const rowsEl = document.getElementById("rows");
+  rowsEl.innerHTML = "";
+
+  const keys = Object.keys(products);
+  if (keys.length === 0) {
+    rowsEl.innerHTML = `<div class="empty-msg">Hozircha dorilar qo'shilmagan. Pastdagi tugma orqali qo'shing.</div>`;
+    return;
+  }
+
+  keys.forEach((key) => {
+    const div = document.createElement("div");
+    div.className = "row";
+    div.textContent = products[key].name || "(nomsiz)";
+    div.onclick = () => {
+      selectedKey = (selectedKey === key) ? null : key;
+      document.querySelectorAll(".row").forEach(r => r.classList.remove("selected"));
+      if (selectedKey) div.classList.add("selected");
+      renderToolbar();
+    };
+    rowsEl.appendChild(div);
+  });
+}
+
+function renderToolbar() {
+  const bar = document.getElementById("toolbar");
+  bar.innerHTML = "";
+  if (!selectedKey) return;
+  const btn = document.createElement("button");
+  btn.className = "delete-btn";
+  btn.innerHTML = "O'chirish 🗑️";
+  btn.onclick = async () => {
+    if (!confirm(`"${products[selectedKey].name}" o'chirilsinmi?`)) return;
+    await fbDelete(`products/${selectedKey}`);
+    loadList();
+  };
+  bar.appendChild(btn);
+}
+
+// ============================================================
+// Yangi mahsulot qo'shish ko'rinishi
+// ============================================================
+let pickedImageBase64 = null;
+
+function openAddView() {
+  document.getElementById("list-view").style.display = "none";
+  document.getElementById("add-view").style.display = "block";
+  document.getElementById("addFab").style.display = "none";
+  document.getElementById("name").value = "";
+  document.getElementById("desc").value = "";
+  document.getElementById("status-msg").textContent = "";
+  pickedImageBase64 = null;
+  document.getElementById("preview").style.display = "none";
+  document.getElementById("imgIcon").style.display = "block";
+  document.getElementById("imgLabel").textContent = "Rasm qo'shing";
+}
+
+document.getElementById("imgPicker").onclick = () => document.getElementById("fileInput").click();
+
+document.getElementById("fileInput").onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file || !file.type.startsWith("image/")) return;
+
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      // Rasmni siqish (bazani ortiqcha og'irlashtirmaslik uchun)
+      const maxW = 900;
+      const scale = Math.min(1, maxW / img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.75);
+      pickedImageBase64 = dataUrl.split(",")[1];
+
+      const preview = document.getElementById("preview");
+      preview.src = dataUrl;
+      preview.style.display = "block";
+      document.getElementById("imgIcon").style.display = "none";
+      document.getElementById("imgLabel").textContent = "Rasm tanlandi ✅";
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+};
+
+document.getElementById("cancelBtn").onclick = loadList;
+
+document.getElementById("saveBtn").onclick = async () => {
+  const name = document.getElementById("name").value.trim();
+  const desc = document.getElementById("desc").value.trim();
+  const statusEl = document.getElementById("status-msg");
+
+  if (!name) { statusEl.textContent = "qabul qilinmadi❌ dori nomi kiritilmagan."; return; }
+  if (!desc) { statusEl.textContent = "qabul qilinmadi❌ ma'lumot kiritilmagan."; return; }
+
+  const key = normalizeKey(name);
+  if (!key) { statusEl.textContent = "qabul qilinmadi❌ dori nomi noto'g'ri."; return; }
+
+  document.getElementById("saveBtn").disabled = true;
+  statusEl.textContent = "Saqlanmoqda…";
+
+  const ok = await fbSet(`products/${key}`, {
+    name: name,
+    description: desc,
+    image_base64: pickedImageBase64 || null
+  });
+
+  document.getElementById("saveBtn").disabled = false;
+
+  if (ok) {
+    statusEl.textContent = "qabul bo'ldi✅";
+    setTimeout(loadList, 700);
+  } else {
+    statusEl.textContent = "qabul qilinmadi❌ bazaga yozishda xatolik yuz berdi.";
+  }
+};
+
+document.getElementById("addFab").onclick = openAddView;
+
+// ============================================================
+// Ishga tushirish
+// ============================================================
+(async () => {
+  const ok = await checkAccess();
+  if (ok) loadList();
+})();
+</script>
+</body>
+</html>
