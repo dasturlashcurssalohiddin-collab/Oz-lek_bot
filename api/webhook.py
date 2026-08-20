@@ -157,10 +157,14 @@ async def send_product(bot: Bot, chat_id: int, product: dict):
     if image_b64:
         try:
             photo_bytes = base64.b64decode(image_b64)
-            await bot.send_photo(chat_id, io.BytesIO(photo_bytes), caption=caption)
+            photo_file = io.BytesIO(photo_bytes)
+            photo_file.name = "product.jpg"
+            await bot.send_photo(chat_id, photo_file, caption=caption)
             return
         except Exception as e:
             print("Rasm yuborishda xato:", e)
+            await bot.send_message(chat_id, f"{caption}\n\n(⚠️ rasmni yuborib bo'lmadi)")
+            return
 
     await bot.send_message(chat_id, caption)
 
