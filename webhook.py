@@ -38,12 +38,18 @@ FIREBASE_SECRET = os.environ.get("FIREBASE_SECRET", "")
 # FIREBASE YORDAMCHI FUNKSIYALAR (REST API orqali, doimiy saqlash uchun)
 # --------------------------------------------------------------------------
 
+def _fb_params():
+    """FIREBASE_SECRET berilgan bo'lsa qo'shadi, bo'lmasa (masalan test mode
+    rejimida) auth parametrisiz so'rov yuboradi."""
+    return {"auth": FIREBASE_SECRET} if FIREBASE_SECRET else {}
+
+
 def fb_get(path):
     """Firebase'dan ma'lumot o'qish. Topilmasa None qaytaradi."""
     try:
         r = requests.get(
             f"{FIREBASE_DB_URL}/{path}.json",
-            params={"auth": FIREBASE_SECRET},
+            params=_fb_params(),
             timeout=8,
         )
         r.raise_for_status()
@@ -58,7 +64,7 @@ def fb_set(path, data):
     try:
         r = requests.put(
             f"{FIREBASE_DB_URL}/{path}.json",
-            params={"auth": FIREBASE_SECRET},
+            params=_fb_params(),
             json=data,
             timeout=8,
         )
@@ -74,7 +80,7 @@ def fb_update(path, data):
     try:
         r = requests.patch(
             f"{FIREBASE_DB_URL}/{path}.json",
-            params={"auth": FIREBASE_SECRET},
+            params=_fb_params(),
             json=data,
             timeout=8,
         )
@@ -89,7 +95,7 @@ def fb_delete(path):
     try:
         r = requests.delete(
             f"{FIREBASE_DB_URL}/{path}.json",
-            params={"auth": FIREBASE_SECRET},
+            params=_fb_params(),
             timeout=8,
         )
         r.raise_for_status()
