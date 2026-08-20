@@ -419,7 +419,7 @@ async def handle_update(bot: Bot, update: Update, request_host: str):
     text = (message.text or message.caption or "").strip()
 
     session = fb_get(f"sessions/{chat_id}") or {}
-    is_admin = bool(session.get("admin", False))
+    is_admin = bool(session.get("admin", False))  # endi ishlatilmaydi, kelajakda kerak bo'lishi mumkin
     step = session.get("step")
 
     # ---------------- BUYRUQLAR ----------------
@@ -432,15 +432,12 @@ async def handle_update(bot: Bot, update: Update, request_host: str):
 
     if text.startswith("/til") or text.startswith("/language") or text.startswith("/язык"):
         lang, script, _ = await get_session_lang(chat_id, telegram_lang_code)
-        await bot.send_message(chat_id, ui(lang, script, "choose_lang"), reply_markup=build_lang_menu())
+        await tracked_send_message(bot, chat_id, ui(lang, script, "choose_lang"), reply_markup=build_lang_menu())
         return
 
     if text.startswith("/admin"):
-        if is_admin:
-            await send_admin_link(bot, chat_id, request_host)
-        else:
-            fb_set(f"sessions/{chat_id}", {"admin": False, "step": "await_id"})
-            await bot.send_message(chat_id, "🔑 Admin ID kiriting:")
+        fb_set(f"sessions/{chat_id}", {"step": "await_id"})
+        await bot.send_message(chat_id, "🔑 Admin ID kiriting:")
         await try_delete(bot, chat_id, message.message_id)
         return
 
@@ -460,10 +457,10 @@ async def handle_update(bot: Bot, update: Update, request_host: str):
     if step == "await_password":
         entered_id = session.get("temp_id", "")
         if entered_id == ADMIN_LOGIN_ID and text == ADMIN_LOGIN_PASSWORD:
-            fb_set(f"sessions/{chat_id}", {"admin": True, "step": None})
+            fb_set(f"sessions/{chat_id}", {"step": None})
             await send_admin_link(bot, chat_id, request_host)
         else:
-            fb_set(f"sessions/{chat_id}", {"admin": False, "step": None})
+            fb_set(f"sessions/{chat_id}", {"step": None})
             await bot.send_message(chat_id, "❌ ID yoki parol noto'g'ri.")
         await try_delete(bot, chat_id, message.message_id)
         return
@@ -504,7 +501,6 @@ async def handle_update(bot: Bot, update: Update, request_host: str):
 
 async def send_admin_link(bot: Bot, chat_id: int, request_host: str):
     token = secrets.token_urlsafe(24)
-    fb_set(f"admin_tokens/{token}", {"created": int(time.time() * 1000)})
 
     site_url = get_site_url(request_host)
     if not site_url:
@@ -513,7 +509,14 @@ async def send_admin_link(bot: Bot, chat_id: int, request_host: str):
 
     link = f"{site_url}/admin?token={token}"
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔐 Admin panelni ochish", url=link)]])
-    await bot.send_message(chat_id, "✅ Tasdiqlandi. Admin panelni oching:", reply_markup=kb)
+    msg = await bot.send_message(chat_id, "✅ Tasdiqlandi. Admin panelni oching:", reply_markup=kb)
+
+    # chat_id va message_id ni ham saqlaymiz - sayt ochilganda shu xabar avtomatik o'chadi
+    fb_set(f"admin_tokens/{token}", {
+        "created": int(time.time() * 1000),
+        "chat_id": chat_id,
+        "message_id": msg.message_id,
+    })
 
 
 # --------------------------------------------------------------------------
