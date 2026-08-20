@@ -310,13 +310,20 @@ async function checkAccess() {
     gate.textContent = "Ruxsat yo'q. Telegram botga qaytib /admin yozing.";
     return false;
   }
-  const record = await fbGet(`admin_tokens/${token}`);
-  if (!record || !record.created || (Date.now() - record.created > TOKEN_TTL_MS)) {
+  // Serverga tokenni "ishlatildi" deb belgilashni so'raymiz - shu yerda
+  // botdagi "Admin panelni oching" xabari ham avtomatik o'chadi.
+  let ok = false;
+  try {
+    const r = await fetch(`/api/consume-token?token=${encodeURIComponent(token)}`);
+    const data = await r.json();
+    ok = !!data.ok;
+  } catch (e) {
+    ok = false;
+  }
+  if (!ok) {
     gate.textContent = "Sessiya tugagan yoki noto'g'ri. Telegram botga qaytib /admin yozing.";
     return false;
   }
-  // Bir martalik havola: tekshirilgach darhol o'chiriladi, qayta ishlatib bo'lmaydi.
-  await fbDelete(`admin_tokens/${token}`);
   gate.style.display = "none";
   document.getElementById("app").style.display = "block";
   document.getElementById("addFab").style.display = "block";
