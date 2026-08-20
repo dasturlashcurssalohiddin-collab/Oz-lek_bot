@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Telegram bot - Foydalanuvchi paneli (admin ishlari veb-saytda: /admin -> sayt)
+Ko'p tillilik: foydalanuvchi tiliga (Telegram profilidan) avtomatik moslashadi,
+"menga moslash" desa yoki /til orqali tilni/yozuvni o'zi tanlaydi.
 
 Muhit o'zgaruvchilari (Vercel -> Settings -> Environment Variables):
     BOT_TOKEN            - Telegram bot tokeni (@BotFather dan)
@@ -9,7 +11,6 @@ Muhit o'zgaruvchilari (Vercel -> Settings -> Environment Variables):
     FIREBASE_DB_URL      - masalan: https://loyiha-nomi-default-rtdb.firebaseio.com
     FIREBASE_SECRET      - (ixtiyoriy) Firebase legacy database secret
     SITE_URL             - (ixtiyoriy) masalan https://oz-lek-bot.vercel.app
-                            berilmasa, so'rov domeni avtomatik ishlatiladi
 """
 
 import os
@@ -19,6 +20,7 @@ import json
 import time
 import base64
 import secrets
+import hashlib
 import asyncio
 import difflib
 from http.server import BaseHTTPRequestHandler
@@ -43,11 +45,11 @@ SITE_URL_ENV = os.environ.get("SITE_URL", "").rstrip("/")
 FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "").rstrip("/")
 FIREBASE_SECRET = os.environ.get("FIREBASE_SECRET", "")
 
-TOKEN_TTL_SECONDS = 30 * 60  # admin havolasi 30 daqiqa amal qiladi
+TOKEN_TTL_SECONDS = 30 * 60
 
 
 # --------------------------------------------------------------------------
-# FIREBASE YORDAMCHI FUNKSIYALAR (REST API orqali, doimiy saqlash uchun)
+# FIREBASE YORDAMCHI FUNKSIYALAR
 # --------------------------------------------------------------------------
 
 def _fb_params():
@@ -85,7 +87,7 @@ def fb_update(path, data):
 
 
 # --------------------------------------------------------------------------
-# KIRILL <-> LOTIN NORMALLASHTIRISH VA FUZZY QIDIRUV
+# KIRILL <-> LOTIN (o'zbekcha qidiruv va ko'rsatish uchun)
 # --------------------------------------------------------------------------
 
 CYR_TO_LAT = {
@@ -97,10 +99,37 @@ CYR_TO_LAT = {
     "ў": "o'", "қ": "q", "ғ": "g'", "ҳ": "h",
 }
 
+LAT_MULTI_TO_CYR = [
+    ("o'", "ў"), ("oʻ", "ў"), ("o‘", "ў"), ("o`", "ў"),
+    ("g'", "ғ"), ("gʻ", "ғ"), ("g‘", "ғ"), ("g`", "ғ"),
+    ("yo", "ё"), ("yu", "ю"), ("ya", "я"),
+    ("sh", "ш"), ("ch", "ч"), ("ng", "нг"), ("ts", "ц"),
+]
+LAT_SINGLE_TO_CYR = {
+    "a": "а", "b": "б", "d": "д", "e": "е", "f": "ф", "g": "г", "h": "ҳ",
+    "i": "и", "j": "ж", "k": "к", "l": "л", "m": "м", "n": "н", "o": "о",
+    "p": "п", "q": "қ", "r": "р", "s": "с", "t": "т", "u": "у", "v": "в",
+    "x": "х", "y": "й", "z": "з",
+}
+
 
 def transliterate(text: str) -> str:
+    """Kirillcha matnni lotinga o'giradi (qidiruv uchun normallashtirish)."""
     text = text.lower()
     return "".join(CYR_TO_LAT.get(ch, ch) for ch in text)
+
+
+def latin_to_cyrillic(text: str) -> str:
+    """Lotincha o'zbek matnini kirillga o'giradi (ko'rsatish uchun, taxminiy)."""
+    if not text:
+        return text
+    result = text.lower()
+    for lat, cyr in LAT_MULTI_TO_CYR:
+        result = result.replace(lat, cyr)
+    result = "".join(LAT_SINGLE_TO_CYR.get(ch, ch) for ch in result)
+    if result:
+        result = result[0].upper() + result[1:]
+    return result
 
 
 def normalize_for_match(text: str) -> str:
@@ -114,7 +143,6 @@ def find_best_product(user_text: str, products: dict, threshold: float = 0.7):
     query = normalize_for_match(user_text)
     if not query or not products:
         return None
-
     best_key, best_ratio = None, 0.0
     for key, p in products.items():
         candidate = normalize_for_match(p.get("name", ""))
@@ -125,8 +153,115 @@ def find_best_product(user_text: str, products: dict, threshold: float = 0.7):
             ratio = max(ratio, 0.85)
         if ratio > best_ratio:
             best_ratio, best_key = ratio, key
-
     return best_key if best_ratio >= threshold else None
+
+
+def contains_cyrillic(text: str) -> bool:
+    return bool(re.search(r"[\u0400-\u04FF]", text))
+
+
+# --------------------------------------------------------------------------
+# TARJIMA (bepul, ochiq Google Translate endpoint + Firebase kesh)
+# --------------------------------------------------------------------------
+
+def translate_google(text: str, target_lang: str, source_lang: str = "auto"):
+    """(tarjima_matni, aniqlangan_manba_til) qaytaradi. Xato bo'lsa (None, None)."""
+    try:
+        r = requests.get(
+            "https://translate.googleapis.com/translate_a/single",
+            params={"client": "gtx", "sl": source_lang, "tl": target_lang, "dt": "t", "q": text},
+            timeout=6,
+        )
+        r.raise_for_status()
+        data = r.json()
+        translated = "".join(seg[0] for seg in data[0] if seg[0])
+        detected = data[2] if len(data) > 2 else None
+        return translated, detected
+    except Exception as e:
+        print("Tarjima xatosi:", e)
+        return None, None
+
+
+def translate_cached(text: str, target_lang: str) -> str:
+    if not text:
+        return text
+    cache_key = f"translations/{target_lang}/{hashlib.md5(text.encode('utf-8')).hexdigest()}"
+    cached = fb_get(cache_key)
+    if isinstance(cached, dict) and cached.get("t"):
+        return cached["t"]
+    translated, _ = translate_google(text, target_lang, source_lang="uz")
+    if translated:
+        fb_set(cache_key, {"t": translated})
+        return translated
+    return text  # tarjima ishlamasa, asl matnni ko'rsatamiz
+
+
+def display_text(source_text: str, lang: str, script: str) -> str:
+    """Mahsulot nomi/tavsifini foydalanuvchi tiliga/yozuviga moslab qaytaradi."""
+    if not source_text:
+        return source_text
+    if lang == "uz":
+        return latin_to_cyrillic(source_text) if script == "cyrillic" else source_text
+    return translate_cached(source_text, lang)
+
+
+BASE_STRINGS = {
+    "menu_title": "🛍 Mahsulotlar ro'yxati:",
+    "no_products": "Hozircha mahsulotlar mavjud emas.",
+    "not_found": "🔍 Bunday mahsulot topilmadi.",
+    "product_removed": "Bu mahsulot topilmadi (ehtimol o'chirilgan).",
+    "adapted": "✅ Til sozlamangiz yangilandi.",
+    "choose_lang": "Tilni tanlang:",
+}
+
+
+def ui(lang: str, script: str, key: str) -> str:
+    return display_text(BASE_STRINGS[key], lang, script)
+
+
+# --------------------------------------------------------------------------
+# TIL ANIQLASH VA SOZLASH
+# --------------------------------------------------------------------------
+
+LANGUAGE_OPTIONS = [
+    ("O'zbek (lotin)", "uz", "latin"),
+    ("Ўзбек (кирилл)", "uz", "cyrillic"),
+    ("Русский", "ru", "-"),
+    ("English", "en", "-"),
+    ("Deutsch", "de", "-"),
+    ("Français", "fr", "-"),
+    ("Español", "es", "-"),
+    ("Türkçe", "tr", "-"),
+    ("العربية", "ar", "-"),
+    ("中文", "zh-CN", "-"),
+    ("한국어", "ko", "-"),
+    ("Tiếng Việt", "vi", "-"),
+]
+
+ADAPT_TRIGGERS = [
+    "menga moslash", "moslash", "adapt", "adapt to me",
+    "настрой", "подстрой", "anpassen", "адаптируй",
+]
+
+
+def default_lang_from_telegram(language_code: str):
+    """Telegram profilidagi tildan boshlang'ich til/yozuvni aniqlaydi."""
+    if not language_code:
+        return "uz", "latin"
+    code = language_code.lower().split("-")[0]
+    if code == "uz":
+        return "uz", "latin"
+    return code, "-"
+
+
+async def get_session_lang(chat_id: int, telegram_language_code: str):
+    session = fb_get(f"sessions/{chat_id}") or {}
+    lang = session.get("lang")
+    script = session.get("script")
+    if not lang:
+        lang, script = default_lang_from_telegram(telegram_language_code)
+        fb_update(f"sessions/{chat_id}", {"lang": lang, "script": script})
+    return lang, script, session
 
 
 # --------------------------------------------------------------------------
@@ -140,30 +275,42 @@ async def try_delete(bot: Bot, chat_id: int, message_id: int):
         print("Xabarni o'chirib bo'lmadi:", e)
 
 
-def build_menu(products: dict):
+def build_menu(products: dict, lang: str, script: str):
     if not products:
         return None
     rows = [
-        [InlineKeyboardButton(p.get("name", key), callback_data=key)]
+        [InlineKeyboardButton(display_text(p.get("name", key), lang, script), callback_data=key)]
         for key, p in products.items()
     ]
     return InlineKeyboardMarkup(rows)
 
 
-MESSAGE_LIMIT = 4096  # Telegramning oddiy xabar uchun cheklovi
+def build_lang_menu():
+    rows = []
+    row = []
+    for label, lang, script in LANGUAGE_OPTIONS:
+        row.append(InlineKeyboardButton(label, callback_data=f"setlang:{lang}:{script}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+MESSAGE_LIMIT = 4096
+CAPTION_LIMIT = 1024
 
 
 async def send_long_text(bot: Bot, chat_id: int, text: str):
-    """Juda uzun matnni Telegram limitiga (4096) bo'lib yuboradi."""
     for i in range(0, len(text), MESSAGE_LIMIT):
         await bot.send_message(chat_id, text[i:i + MESSAGE_LIMIT])
 
 
-CAPTION_LIMIT = 1024  # Telegramning rasm ostidagi matn (caption) uchun cheklovi
-
-
-async def send_product(bot: Bot, chat_id: int, product: dict):
-    caption = f"{product.get('name', '')}\n\n{product.get('description', '')}"
+async def send_product(bot: Bot, chat_id: int, product: dict, lang: str, script: str):
+    name = display_text(product.get("name", ""), lang, script)
+    desc = display_text(product.get("description", ""), lang, script)
+    caption = f"{name}\n\n{desc}"
     image_b64 = product.get("image_base64")
 
     if image_b64:
@@ -175,13 +322,12 @@ async def send_product(bot: Bot, chat_id: int, product: dict):
             if len(caption) <= CAPTION_LIMIT:
                 await bot.send_photo(chat_id, photo_file, caption=caption)
             else:
-                # Caption juda uzun bo'lsa: rasm nomi bilan, matn alohida xabar(lar)da
-                await bot.send_photo(chat_id, photo_file, caption=product.get("name", ""))
-                await send_long_text(bot, chat_id, product.get("description", ""))
+                await bot.send_photo(chat_id, photo_file, caption=name)
+                await send_long_text(bot, chat_id, desc)
             return
         except Exception as e:
             print("Rasm yuborishda xato:", e)
-            await send_long_text(bot, chat_id, f"{caption}\n\n(⚠️ rasmni yuborib bo'lmadi)")
+            await send_long_text(bot, chat_id, f"{caption}\n\n(⚠️)")
             return
 
     await send_long_text(bot, chat_id, caption)
@@ -200,17 +346,29 @@ def get_site_url(request_host: str) -> str:
 # --------------------------------------------------------------------------
 
 async def handle_update(bot: Bot, update: Update, request_host: str):
-    # --- Callback (menyudagi tugma bosilganda) ---
+    telegram_lang_code = update.effective_user.language_code if update.effective_user else None
+
+    # --- Callback (menyu tugmasi yoki til tanlash) ---
     if update.callback_query:
         cq = update.callback_query
         chat_id = cq.message.chat_id
+        data = cq.data or ""
+
+        if data.startswith("setlang:"):
+            _, lang, script = data.split(":")
+            fb_update(f"sessions/{chat_id}", {"lang": lang, "script": script})
+            await cq.answer()
+            await bot.send_message(chat_id, ui(lang, script, "adapted"))
+            return
+
+        lang, script, _ = await get_session_lang(chat_id, telegram_lang_code)
         products = fb_get("products") or {}
-        product = products.get(cq.data)
+        product = products.get(data)
         await cq.answer()
         if product:
-            await send_product(bot, chat_id, product)
+            await send_product(bot, chat_id, product, lang, script)
         else:
-            await bot.send_message(chat_id, "Bu mahsulot topilmadi (ehtimol o'chirilgan).")
+            await bot.send_message(chat_id, ui(lang, script, "product_removed"))
         return
 
     message = update.message
@@ -228,12 +386,18 @@ async def handle_update(bot: Bot, update: Update, request_host: str):
 
     if text.startswith("/start"):
         fb_update(f"sessions/{chat_id}", {"step": None})
+        lang, script, _ = await get_session_lang(chat_id, telegram_lang_code)
         products = fb_get("products") or {}
-        kb = build_menu(products)
+        kb = build_menu(products, lang, script)
         if kb:
-            await bot.send_message(chat_id, "🛍 Mahsulotlar ro'yxati:", reply_markup=kb)
+            await bot.send_message(chat_id, ui(lang, script, "menu_title"), reply_markup=kb)
         else:
-            await bot.send_message(chat_id, "Hozircha mahsulotlar mavjud emas.")
+            await bot.send_message(chat_id, ui(lang, script, "no_products"))
+        return
+
+    if text.startswith("/til") or text.startswith("/language") or text.startswith("/язык"):
+        lang, script, _ = await get_session_lang(chat_id, telegram_lang_code)
+        await bot.send_message(chat_id, ui(lang, script, "choose_lang"), reply_markup=build_lang_menu())
         return
 
     if text.startswith("/admin"):
@@ -269,15 +433,35 @@ async def handle_update(bot: Bot, update: Update, request_host: str):
         await try_delete(bot, chat_id, message.message_id)
         return
 
+    # ---------------- "MENGA MOSLASH" TRIGGERI ----------------
+
+    if text and not text.startswith("/"):
+        normalized = text.lower()
+        if any(trigger in normalized for trigger in ADAPT_TRIGGERS):
+            _, detected = translate_google(text, "en", source_lang="auto")
+            if detected:
+                new_script = "cyrillic" if (detected == "uz" and contains_cyrillic(text)) else "latin"
+                fb_update(f"sessions/{chat_id}", {"lang": detected, "script": new_script})
+                await bot.send_message(chat_id, ui(detected, new_script, "adapted"))
+                return
+
     # ---------------- ODDIY MATN -> MAHSULOT QIDIRISH ----------------
 
     if text and not text.startswith("/"):
+        lang, script, _ = await get_session_lang(chat_id, telegram_lang_code)
         products = fb_get("products") or {}
+
         match_key = find_best_product(text, products)
+        if not match_key and lang != "uz":
+            # Foydalanuvchi o'z tilida qidirgan bo'lishi mumkin - o'zbekchaga tarjima qilib qayta urinamiz
+            translated_query, _ = translate_google(text, "uz", source_lang="auto")
+            if translated_query:
+                match_key = find_best_product(translated_query, products)
+
         if match_key:
-            await send_product(bot, chat_id, products[match_key])
+            await send_product(bot, chat_id, products[match_key], lang, script)
         else:
-            await bot.send_message(chat_id, "🔍 Bunday mahsulot topilmadi.")
+            await bot.send_message(chat_id, ui(lang, script, "not_found"))
         return
 
 
