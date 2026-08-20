@@ -1,554 +1,548 @@
-<!DOCTYPE html>
-<html lang="uz">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OZ-LEK — Admin panel</title>
-<style>
-  :root {
-    --border: #111;
-    --gray-bg: #d9d9d9;
-    --red: #e6402e;
-    --green: #3aa855;
-    --navy: #1c3f7a;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #fff;
-    color: #111;
-  }
+# -*- coding: utf-8 -*-
+"""
+Telegram bot - Foydalanuvchi paneli (admin ishlari veb-saytda: /admin -> sayt)
+Ko'p tillilik: foydalanuvchi tiliga (Telegram profilidan) avtomatik moslashadi,
+"menga moslash" desa yoki /til orqali tilni/yozuvni o'zi tanlaydi.
 
-  /* ---- Header ---- */
-  header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    background: var(--gray-bg);
-    border-bottom: 3px solid var(--border);
-    padding: 14px 20px;
-  }
-  .logo {
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    background: #fff;
-    border: 3px solid var(--green);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: Georgia, serif;
-    font-weight: bold;
-    font-style: italic;
-    color: var(--navy);
-    font-size: 15px;
-    flex-shrink: 0;
-  }
-  header h1 {
-    font-size: 22px;
-    margin: 0;
-    font-weight: 600;
-  }
+Muhit o'zgaruvchilari (Vercel -> Settings -> Environment Variables):
+    BOT_TOKEN            - Telegram bot tokeni (@BotFather dan)
+    ADMIN_LOGIN_ID       - admin panelga kirish uchun ID
+    ADMIN_LOGIN_PASSWORD - admin panelga kirish uchun parol
+    FIREBASE_DB_URL      - masalan: https://loyiha-nomi-default-rtdb.firebaseio.com
+    FIREBASE_SECRET      - (ixtiyoriy) Firebase legacy database secret
+    SITE_URL             - (ixtiyoriy) masalan https://oz-lek-bot.vercel.app
+"""
 
-  /* ---- List view ---- */
-  #list-view { display: none; }
-  .toolbar {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    padding: 10px 16px;
-    border-bottom: 2px solid var(--border);
-    min-height: 48px;
-  }
-  .toolbar { gap: 10px; }
-  .delete-btn, .edit-btn {
-    border: none;
-    padding: 8px 16px;
-    font-size: 15px;
-    border-radius: 4px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: #fff;
-  }
-  .delete-btn { background: var(--red); }
-  .edit-btn { background: var(--navy); }
-  .delete-btn:hover, .edit-btn:hover { filter: brightness(0.92); }
+import os
+import re
+import io
+import json
+import time
+import base64
+import secrets
+import hashlib
+import asyncio
+import difflib
+from http.server import BaseHTTPRequestHandler
 
-  .row {
-    padding: 18px 16px;
-    text-align: center;
-    font-size: 18px;
-    border-bottom: 2px solid var(--border);
-    cursor: pointer;
-    user-select: none;
-  }
-  .row:hover { background: #f7f7f7; }
-  .row.selected { background: #fdeeec; font-weight: 600; }
+import requests
+from telegram import (
+    Bot,
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 
-  .empty-msg {
-    padding: 40px 20px;
-    text-align: center;
-    color: #888;
-    font-size: 16px;
-  }
+# --------------------------------------------------------------------------
+# SOZLAMALAR
+# --------------------------------------------------------------------------
 
-  .fab {
-    position: fixed;
-    right: 20px;
-    bottom: 24px;
-    background: var(--navy);
-    color: #fff;
-    border: none;
-    padding: 16px 22px;
-    border-radius: 30px;
-    font-size: 16px;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
-    cursor: pointer;
-  }
-  .fab:hover { filter: brightness(1.1); }
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+ADMIN_LOGIN_ID = os.environ.get("ADMIN_LOGIN_ID", "")
+ADMIN_LOGIN_PASSWORD = os.environ.get("ADMIN_LOGIN_PASSWORD", "")
+SITE_URL_ENV = os.environ.get("SITE_URL", "").rstrip("/")
 
-  /* ---- Add product view ---- */
-  #add-view { display: none; }
-  .add-grid {
-    display: grid;
-    grid-template-columns: 1fr 240px;
-    min-height: calc(100vh - 84px);
-  }
-  @media (max-width: 640px) {
-    .add-grid { grid-template-columns: 1fr; }
-  }
-  .add-left {
-    display: flex;
-    flex-direction: column;
-  }
-  .name-field {
-    background: var(--gray-bg);
-    padding: 14px 16px;
-    font-size: 17px;
-    border: none;
-    border-bottom: 3px solid var(--border);
-    outline: none;
-    width: 100%;
-  }
-  .hint {
-    padding: 12px 16px;
-    color: #999;
-    font-size: 14px;
-    line-height: 1.4;
-  }
-  textarea#desc {
-    flex: 1;
-    resize: none;
-    border: none;
-    background: var(--gray-bg);
-    padding: 16px;
-    font-size: 17px;
-    font-family: inherit;
-    outline: none;
-    min-height: 260px;
-  }
-  .add-right-col {
-    display: flex;
-    flex-direction: column;
-    border-left: 2px solid var(--border);
-  }
-  @media (max-width: 640px) {
-    .add-right-col { border-left: none; border-top: 2px solid var(--border); }
-  }
-  .media-box {
-    background: var(--gray-bg);
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    padding: 18px;
-    cursor: pointer;
-    text-align: center;
-  }
-  .media-box:first-child { border-bottom: 2px solid var(--border); }
-  .media-box img, .media-box video {
-    max-width: 100%;
-    max-height: 140px;
-    border-radius: 6px;
-    display: none;
-  }
-  .img-icon { font-size: 38px; }
-  #videoLabel { color: #666; font-size: 13px; }
+FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "").rstrip("/")
+FIREBASE_SECRET = os.environ.get("FIREBASE_SECRET", "")
 
-  .bottom-bar {
-    display: flex;
-    gap: 10px;
-    padding: 14px 16px;
-    border-top: 2px solid var(--border);
-  }
-  .btn {
-    flex: 1;
-    padding: 14px;
-    font-size: 16px;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-  .btn-save { background: var(--navy); color: #fff; }
-  .btn-cancel { background: #eee; color: #333; }
-  .btn:disabled { opacity: 0.5; cursor: default; }
+TOKEN_TTL_SECONDS = 30 * 60
 
-  #status-msg {
-    padding: 14px 16px;
-    font-size: 15px;
-  }
 
-  /* ---- Gate (token check) ---- */
-  #gate {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    text-align: center;
-    padding: 20px;
-    font-size: 17px;
-    color: #444;
-  }
-</style>
-</head>
-<body>
+# --------------------------------------------------------------------------
+# FIREBASE YORDAMCHI FUNKSIYALAR
+# --------------------------------------------------------------------------
 
-<div id="gate">Tekshirilmoqda…</div>
+def _fb_params():
+    return {"auth": FIREBASE_SECRET} if FIREBASE_SECRET else {}
 
-<div id="app" style="display:none;">
-  <header>
-    <div class="logo">LEK</div>
-    <h1>Dorilar menyusi</h1>
-  </header>
 
-  <div id="list-view">
-    <div class="toolbar" id="toolbar"></div>
-    <div id="rows"></div>
-  </div>
+def fb_get(path):
+    try:
+        r = requests.get(f"{FIREBASE_DB_URL}/{path}.json", params=_fb_params(), timeout=8)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print("Firebase GET xato:", e)
+        return None
 
-  <div id="add-view">
-    <div class="add-grid">
-      <div class="add-left">
-        <input id="name" class="name-field" type="text" placeholder="Dorining nomini yozing">
-        <div class="hint">dori nomi yozilsa menyuda ham shu nom ko'rinadi. ma'lumot qismiga joy kam ko'rinadi, lekin cheksiz yozish mumkin.</div>
-        <textarea id="desc" placeholder="Ma'lumot kiriting"></textarea>
-      </div>
-      <div class="add-right-col">
-        <div class="media-box" id="imgPicker">
-          <img id="preview">
-          <div class="img-icon" id="imgIcon">🖼️</div>
-          <div id="imgLabel">Rasm qo'shing</div>
-          <input type="file" id="fileInput" accept="image/*" style="display:none;">
-        </div>
-        <div class="media-box" id="videoPicker">
-          <video id="videoPreview" controls></video>
-          <div class="img-icon" id="videoIcon">🎬</div>
-          <div id="videoLabel">Video qo'shing (ixtiyoriy)</div>
-          <input type="file" id="videoInput" accept="video/*" style="display:none;">
-        </div>
-      </div>
-    </div>
-    <div id="status-msg"></div>
-    <div class="bottom-bar">
-      <button class="btn btn-cancel" id="cancelBtn">Bekor qilish</button>
-      <button class="btn btn-save" id="saveBtn">Saqlash</button>
-    </div>
-  </div>
-</div>
 
-<button class="fab" id="addFab" style="display:none;">+ Yangi dori qo'shish</button>
+def fb_set(path, data):
+    try:
+        r = requests.put(f"{FIREBASE_DB_URL}/{path}.json", params=_fb_params(), json=data, timeout=8)
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        print("Firebase SET xato:", e)
+        return False
 
-<script>
-// ============================================================
-// SOZLAMALAR — o'zingizning Firebase manzilingiz
-// ============================================================
-const FIREBASE_DB_URL = "https://oz-lek-default-rtdb.asia-southeast1.firebasedatabase.app";
-const TOKEN_TTL_MS = 30 * 60 * 1000; // token 30 daqiqa amal qiladi
 
-// ============================================================
-// Yordamchi funksiyalar
-// ============================================================
-function normalizeKey(text) {
-  const map = {а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ё:"yo",ж:"j",з:"z",и:"i",й:"y",
-    к:"k",л:"l",м:"m",н:"n",о:"o",п:"p",р:"r",с:"s",т:"t",у:"u",ф:"f",х:"x",
-    ц:"ts",ч:"ch",ш:"sh",щ:"sh",ъ:"",ь:"",э:"e",ю:"yu",я:"ya",ў:"o",қ:"q",ғ:"g",ҳ:"h"};
-  let out = "";
-  for (const ch of text.toLowerCase()) out += map[ch] ?? ch;
-  return out.replace(/[^a-z0-9]/g, "");
+def fb_update(path, data):
+    try:
+        r = requests.patch(f"{FIREBASE_DB_URL}/{path}.json", params=_fb_params(), json=data, timeout=8)
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        print("Firebase UPDATE xato:", e)
+        return False
+
+
+# --------------------------------------------------------------------------
+# KIRILL <-> LOTIN (o'zbekcha qidiruv va ko'rsatish uchun)
+# --------------------------------------------------------------------------
+
+CYR_TO_LAT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "yo",
+    "ж": "j", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "x", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sh",
+    "ъ": "", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+    "ў": "o'", "қ": "q", "ғ": "g'", "ҳ": "h",
 }
 
-async function fbGet(path) {
-  const r = await fetch(`${FIREBASE_DB_URL}/${path}.json`);
-  if (!r.ok) return null;
-  return r.json();
-}
-async function fbSet(path, data) {
-  const r = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
-    method: "PUT", body: JSON.stringify(data)
-  });
-  return r.ok;
-}
-async function fbDelete(path) {
-  const r = await fetch(`${FIREBASE_DB_URL}/${path}.json`, { method: "DELETE" });
-  return r.ok;
+LAT_MULTI_TO_CYR = [
+    ("o'", "ў"), ("oʻ", "ў"), ("o‘", "ў"), ("o`", "ў"),
+    ("g'", "ғ"), ("gʻ", "ғ"), ("g‘", "ғ"), ("g`", "ғ"),
+    ("yo", "ё"), ("yu", "ю"), ("ya", "я"),
+    ("sh", "ш"), ("ch", "ч"), ("ng", "нг"), ("ts", "ц"),
+]
+LAT_SINGLE_TO_CYR = {
+    "a": "а", "b": "б", "d": "д", "e": "е", "f": "ф", "g": "г", "h": "ҳ",
+    "i": "и", "j": "ж", "k": "к", "l": "л", "m": "м", "n": "н", "o": "о",
+    "p": "п", "q": "қ", "r": "р", "s": "с", "t": "т", "u": "у", "v": "в",
+    "x": "х", "y": "й", "z": "з",
 }
 
-// ============================================================
-// Kirish nazorati (token telegram botdan keladi)
-// ============================================================
-async function checkAccess() {
-  const params = new URLSearchParams(location.search);
-  const token = params.get("token");
-  const gate = document.getElementById("gate");
 
-  if (!token) {
-    gate.textContent = "Ruxsat yo'q. Telegram botga qaytib /admin yozing.";
-    return false;
-  }
-  const record = await fbGet(`admin_tokens/${token}`);
-  if (!record || !record.created || (Date.now() - record.created > TOKEN_TTL_MS)) {
-    gate.textContent = "Sessiya tugagan yoki noto'g'ri. Telegram botga qaytib /admin yozing.";
-    return false;
-  }
-  gate.style.display = "none";
-  document.getElementById("app").style.display = "block";
-  document.getElementById("addFab").style.display = "block";
-  return true;
+def transliterate(text: str) -> str:
+    """Kirillcha matnni lotinga o'giradi (qidiruv uchun normallashtirish)."""
+    text = text.lower()
+    return "".join(CYR_TO_LAT.get(ch, ch) for ch in text)
+
+
+def latin_to_cyrillic(text: str) -> str:
+    """Lotincha o'zbek matnini kirillga o'giradi (ko'rsatish uchun, taxminiy)."""
+    if not text:
+        return text
+    result = text.lower()
+    for lat, cyr in LAT_MULTI_TO_CYR:
+        result = result.replace(lat, cyr)
+    result = "".join(LAT_SINGLE_TO_CYR.get(ch, ch) for ch in result)
+    if result:
+        result = result[0].upper() + result[1:]
+    return result
+
+
+def normalize_for_match(text: str) -> str:
+    if not text:
+        return ""
+    text = transliterate(text)
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def find_best_product(user_text: str, products: dict, threshold: float = 0.7):
+    query = normalize_for_match(user_text)
+    if not query or not products:
+        return None
+    best_key, best_ratio = None, 0.0
+    for key, p in products.items():
+        candidate = normalize_for_match(p.get("name", ""))
+        if not candidate:
+            continue
+        ratio = difflib.SequenceMatcher(None, query, candidate).ratio()
+        if query in candidate or candidate in query:
+            ratio = max(ratio, 0.85)
+        if ratio > best_ratio:
+            best_ratio, best_key = ratio, key
+    return best_key if best_ratio >= threshold else None
+
+
+def contains_cyrillic(text: str) -> bool:
+    return bool(re.search(r"[\u0400-\u04FF]", text))
+
+
+# --------------------------------------------------------------------------
+# TARJIMA (bepul, ochiq Google Translate endpoint + Firebase kesh)
+# --------------------------------------------------------------------------
+
+def translate_google(text: str, target_lang: str, source_lang: str = "auto"):
+    """(tarjima_matni, aniqlangan_manba_til) qaytaradi. Xato bo'lsa (None, None)."""
+    try:
+        r = requests.get(
+            "https://translate.googleapis.com/translate_a/single",
+            params={"client": "gtx", "sl": source_lang, "tl": target_lang, "dt": "t", "q": text},
+            timeout=6,
+        )
+        r.raise_for_status()
+        data = r.json()
+        translated = "".join(seg[0] for seg in data[0] if seg[0])
+        detected = data[2] if len(data) > 2 else None
+        return translated, detected
+    except Exception as e:
+        print("Tarjima xatosi:", e)
+        return None, None
+
+
+def translate_cached(text: str, target_lang: str) -> str:
+    if not text:
+        return text
+    cache_key = f"translations/{target_lang}/{hashlib.md5(text.encode('utf-8')).hexdigest()}"
+    cached = fb_get(cache_key)
+    if isinstance(cached, dict) and cached.get("t"):
+        return cached["t"]
+    translated, _ = translate_google(text, target_lang, source_lang="uz")
+    if translated:
+        fb_set(cache_key, {"t": translated})
+        return translated
+    return text  # tarjima ishlamasa, asl matnni ko'rsatamiz
+
+
+def display_text(source_text: str, lang: str, script: str) -> str:
+    """Mahsulot nomi/tavsifini foydalanuvchi tiliga/yozuviga moslab qaytaradi."""
+    if not source_text:
+        return source_text
+    if lang == "uz":
+        return latin_to_cyrillic(source_text) if script == "cyrillic" else source_text
+    return translate_cached(source_text, lang)
+
+
+BASE_STRINGS = {
+    "menu_title": "🛍 Mahsulotlar ro'yxati:",
+    "no_products": "Hozircha mahsulotlar mavjud emas.",
+    "not_found": "🔍 Bunday mahsulot topilmadi.",
+    "product_removed": "Bu mahsulot topilmadi (ehtimol o'chirilgan).",
+    "adapted": "✅ Til sozlamangiz yangilandi.",
+    "choose_lang": "Tilni tanlang:",
 }
 
-// ============================================================
-// Ro'yxat ko'rinishi
-// ============================================================
-let selectedKey = null;
-let products = {};
 
-async function loadList() {
-  document.getElementById("add-view").style.display = "none";
-  document.getElementById("list-view").style.display = "block";
-  document.getElementById("addFab").style.display = "block";
-  selectedKey = null;
-  renderToolbar();
+def ui(lang: str, script: str, key: str) -> str:
+    return display_text(BASE_STRINGS[key], lang, script)
 
-  products = (await fbGet("products")) || {};
-  const rowsEl = document.getElementById("rows");
-  rowsEl.innerHTML = "";
 
-  const keys = Object.keys(products);
-  if (keys.length === 0) {
-    rowsEl.innerHTML = `<div class="empty-msg">Hozircha dorilar qo'shilmagan. Pastdagi tugma orqali qo'shing.</div>`;
-    return;
-  }
+# --------------------------------------------------------------------------
+# TIL ANIQLASH VA SOZLASH
+# --------------------------------------------------------------------------
 
-  keys.forEach((key) => {
-    const div = document.createElement("div");
-    div.className = "row";
-    div.textContent = products[key].name || "(nomsiz)";
-    div.onclick = () => {
-      selectedKey = (selectedKey === key) ? null : key;
-      document.querySelectorAll(".row").forEach(r => r.classList.remove("selected"));
-      if (selectedKey) div.classList.add("selected");
-      renderToolbar();
-    };
-    rowsEl.appendChild(div);
-  });
-}
+LANGUAGE_OPTIONS = [
+    ("O'zbek (lotin)", "uz", "latin"),
+    ("Ўзбек (кирилл)", "uz", "cyrillic"),
+    ("Русский", "ru", "-"),
+    ("English", "en", "-"),
+    ("Deutsch", "de", "-"),
+    ("Français", "fr", "-"),
+    ("Español", "es", "-"),
+    ("Türkçe", "tr", "-"),
+    ("العربية", "ar", "-"),
+    ("中文", "zh-CN", "-"),
+    ("한국어", "ko", "-"),
+    ("Tiếng Việt", "vi", "-"),
+]
 
-function renderToolbar() {
-  const bar = document.getElementById("toolbar");
-  bar.innerHTML = "";
-  if (!selectedKey) return;
+ADAPT_TRIGGERS = [
+    "menga moslash", "moslash", "adapt", "adapt to me",
+    "настрой", "подстрой", "anpassen", "адаптируй",
+]
 
-  const editBtn = document.createElement("button");
-  editBtn.className = "edit-btn";
-  editBtn.innerHTML = "Tahrirlash ✏️";
-  editBtn.onclick = () => openEditView(selectedKey);
-  bar.appendChild(editBtn);
 
-  const delBtn = document.createElement("button");
-  delBtn.className = "delete-btn";
-  delBtn.innerHTML = "O'chirish 🗑️";
-  delBtn.onclick = async () => {
-    if (!confirm(`"${products[selectedKey].name}" o'chirilsinmi?`)) return;
-    await fbDelete(`products/${selectedKey}`);
-    loadList();
-  };
-  bar.appendChild(delBtn);
-}
+def default_lang_from_telegram(language_code: str):
+    """Telegram profilidagi tildan boshlang'ich til/yozuvni aniqlaydi."""
+    if not language_code:
+        return "uz", "latin"
+    code = language_code.lower().split("-")[0]
+    if code == "uz":
+        return "uz", "latin"
+    return code, "-"
 
-// ============================================================
-// Yangi mahsulot qo'shish ko'rinishi
-// ============================================================
-let pickedImageBase64 = null;
-let editingKey = null; // null = yangi mahsulot qo'shish, aks holda tahrirlash
 
-function resetVideoPicker() {
-  pickedVideoBase64 = null;
-  document.getElementById("videoInput").value = "";
-  document.getElementById("videoPreview").style.display = "none";
-  document.getElementById("videoIcon").style.display = "block";
-  document.getElementById("videoLabel").textContent = "Video qo'shing (ixtiyoriy)";
-}
+async def get_session_lang(chat_id: int, telegram_language_code: str):
+    session = fb_get(f"sessions/{chat_id}") or {}
+    lang = session.get("lang")
+    script = session.get("script")
+    if not lang:
+        lang, script = default_lang_from_telegram(telegram_language_code)
+        fb_update(f"sessions/{chat_id}", {"lang": lang, "script": script})
+    return lang, script, session
 
-function openAddView() {
-  editingKey = null;
-  document.getElementById("list-view").style.display = "none";
-  document.getElementById("add-view").style.display = "block";
-  document.getElementById("addFab").style.display = "none";
-  document.getElementById("name").value = "";
-  document.getElementById("desc").value = "";
-  document.getElementById("status-msg").textContent = "";
-  document.getElementById("saveBtn").textContent = "Saqlash";
-  pickedImageBase64 = null;
-  document.getElementById("preview").style.display = "none";
-  document.getElementById("imgIcon").style.display = "block";
-  document.getElementById("imgLabel").textContent = "Rasm qo'shing";
-  resetVideoPicker();
-}
 
-function openEditView(key) {
-  editingKey = key;
-  const product = products[key];
-  document.getElementById("list-view").style.display = "none";
-  document.getElementById("add-view").style.display = "block";
-  document.getElementById("addFab").style.display = "none";
-  document.getElementById("name").value = product.name || "";
-  document.getElementById("desc").value = product.description || "";
-  document.getElementById("status-msg").textContent = "";
-  document.getElementById("saveBtn").textContent = "Yangilash";
+# --------------------------------------------------------------------------
+# TELEGRAM YORDAMCHILARI
+# --------------------------------------------------------------------------
 
-  pickedImageBase64 = product.image_base64 || null;
-  const preview = document.getElementById("preview");
-  if (pickedImageBase64) {
-    preview.src = "data:image/jpeg;base64," + pickedImageBase64;
-    preview.style.display = "block";
-    document.getElementById("imgIcon").style.display = "none";
-    document.getElementById("imgLabel").textContent = "Rasmni almashtirish uchun bosing";
-  } else {
-    preview.style.display = "none";
-    document.getElementById("imgIcon").style.display = "block";
-    document.getElementById("imgLabel").textContent = "Rasm qo'shing";
-  }
+async def try_delete(bot: Bot, chat_id: int, message_id: int):
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        print("Xabarni o'chirib bo'lmadi:", e)
 
-  resetVideoPicker();
-  pickedVideoBase64 = product.video_base64 || null;
-  if (pickedVideoBase64) {
-    const vp = document.getElementById("videoPreview");
-    vp.src = "data:video/mp4;base64," + pickedVideoBase64;
-    vp.style.display = "block";
-    document.getElementById("videoIcon").style.display = "none";
-    document.getElementById("videoLabel").textContent = "Videoni almashtirish uchun bosing";
-  }
-}
 
-document.getElementById("imgPicker").onclick = () => document.getElementById("fileInput").click();
-document.getElementById("videoPicker").onclick = () => document.getElementById("videoInput").click();
+async def track_message(chat_id: int, message_id: int):
+    """Bot yuborgan xabarni keyinroq o'chirish uchun eslab qolamiz."""
+    fb_update(f"sessions/{chat_id}/msgs", {str(message_id): True})
 
-document.getElementById("fileInput").onchange = (e) => {
-  const file = e.target.files[0];
-  if (!file || !file.type.startsWith("image/")) return;
 
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    const img = new Image();
-    img.onload = () => {
-      // Rasmni siqish (bazani ortiqcha og'irlashtirmaslik uchun)
-      const maxW = 900;
-      const scale = Math.min(1, maxW / img.width);
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.75);
-      pickedImageBase64 = dataUrl.split(",")[1];
+async def clear_tracked_history(bot: Bot, chat_id: int):
+    """Til o'zgarganda: botning avval yuborgan xabarlarini (menyu, mahsulotlar) o'chiradi."""
+    session = fb_get(f"sessions/{chat_id}") or {}
+    msgs = session.get("msgs") or {}
+    for mid in msgs.keys():
+        try:
+            await try_delete(bot, chat_id, int(mid))
+        except Exception:
+            pass
+    fb_update(f"sessions/{chat_id}", {"msgs": None})
 
-      const preview = document.getElementById("preview");
-      preview.src = dataUrl;
-      preview.style.display = "block";
-      document.getElementById("imgIcon").style.display = "none";
-      document.getElementById("imgLabel").textContent = "Rasm tanlandi ✅";
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
-};
 
-document.getElementById("cancelBtn").onclick = loadList;
+async def tracked_send_message(bot: Bot, chat_id: int, text: str, **kwargs):
+    msg = await bot.send_message(chat_id, text, **kwargs)
+    await track_message(chat_id, msg.message_id)
+    return msg
 
-let pickedVideoBase64 = null;
-const MAX_VIDEO_MB = 15;
 
-document.getElementById("videoInput").onchange = (e) => {
-  const file = e.target.files[0];
-  if (!file || !file.type.startsWith("video/")) return;
+async def tracked_send_photo(bot: Bot, chat_id: int, photo, **kwargs):
+    msg = await bot.send_photo(chat_id, photo, **kwargs)
+    await track_message(chat_id, msg.message_id)
+    return msg
 
-  if (file.size > MAX_VIDEO_MB * 1024 * 1024) {
-    alert(`Video hajmi juda katta. ${MAX_VIDEO_MB}MB dan kichik video tanlang.`);
-    e.target.value = "";
-    return;
-  }
 
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    const dataUrl = ev.target.result;
-    pickedVideoBase64 = dataUrl.split(",")[1];
+def build_menu(products: dict, lang: str, script: str):
+    if not products:
+        return None
+    rows = [
+        [InlineKeyboardButton(display_text(p.get("name", key), lang, script), callback_data=key)]
+        for key, p in products.items()
+    ]
+    return InlineKeyboardMarkup(rows)
 
-    const preview = document.getElementById("videoPreview");
-    preview.src = dataUrl;
-    preview.style.display = "block";
-    document.getElementById("videoIcon").style.display = "none";
-    document.getElementById("videoLabel").textContent = "Video tanlandi ✅";
-  };
-  reader.readAsDataURL(file);
-};
 
-document.getElementById("saveBtn").onclick = async () => {
-  const name = document.getElementById("name").value.trim();
-  const desc = document.getElementById("desc").value.trim();
-  const statusEl = document.getElementById("status-msg");
+def build_lang_menu():
+    rows = []
+    row = []
+    for label, lang, script in LANGUAGE_OPTIONS:
+        row.append(InlineKeyboardButton(label, callback_data=f"setlang:{lang}:{script}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
 
-  if (!name) { statusEl.textContent = "qabul qilinmadi❌ dori nomi kiritilmagan."; return; }
-  if (!desc) { statusEl.textContent = "qabul qilinmadi❌ ma'lumot kiritilmagan."; return; }
 
-  // Tahrirlashda mavjud kalit saqlanadi (nomi o'zgargan bo'lsa ham), aks holda
-  // nomdan yangi kalit hosil qilinadi.
-  const key = editingKey || normalizeKey(name);
-  if (!key) { statusEl.textContent = "qabul qilinmadi❌ dori nomi noto'g'ri."; return; }
+async def send_menu(bot: Bot, chat_id: int, lang: str, script: str):
+    products = fb_get("products") or {}
+    kb = build_menu(products, lang, script)
+    if kb:
+        await tracked_send_message(bot, chat_id, ui(lang, script, "menu_title"), reply_markup=kb)
+    else:
+        await tracked_send_message(bot, chat_id, ui(lang, script, "no_products"))
 
-  document.getElementById("saveBtn").disabled = true;
-  statusEl.textContent = editingKey ? "Yangilanmoqda…" : "Saqlanmoqda…";
 
-  const ok = await fbSet(`products/${key}`, {
-    name: name,
-    description: desc,
-    image_base64: pickedImageBase64 || null,
-    video_base64: pickedVideoBase64 || null
-  });
+MESSAGE_LIMIT = 4096
+CAPTION_LIMIT = 1024
 
-  document.getElementById("saveBtn").disabled = false;
 
-  if (ok) {
-    statusEl.textContent = "qabul bo'ldi✅";
-    setTimeout(loadList, 700);
-  } else {
-    statusEl.textContent = "qabul qilinmadi❌ bazaga yozishda xatolik yuz berdi.";
-  }
-};
+async def send_long_text(bot: Bot, chat_id: int, text: str):
+    for i in range(0, len(text), MESSAGE_LIMIT):
+        await tracked_send_message(bot, chat_id, text[i:i + MESSAGE_LIMIT])
 
-document.getElementById("addFab").onclick = openAddView;
 
-// ============================================================
-// Ishga tushirish
-// ============================================================
-(async () => {
-  const ok = await checkAccess();
-  if (ok) loadList();
-})();
-</script>
-</body>
-</html>
+async def send_product(bot: Bot, chat_id: int, product: dict, lang: str, script: str):
+    name = display_text(product.get("name", ""), lang, script)
+    desc = display_text(product.get("description", ""), lang, script)
+    caption = f"{name}\n\n{desc}"
+    image_b64 = product.get("image_base64")
+
+    if image_b64:
+        try:
+            photo_bytes = base64.b64decode(image_b64)
+            photo_file = io.BytesIO(photo_bytes)
+            photo_file.name = "product.jpg"
+
+            if len(caption) <= CAPTION_LIMIT:
+                await tracked_send_photo(bot, chat_id, photo_file, caption=caption)
+            else:
+                await tracked_send_photo(bot, chat_id, photo_file, caption=name)
+                await send_long_text(bot, chat_id, desc)
+            return
+        except Exception as e:
+            print("Rasm yuborishda xato:", e)
+            await send_long_text(bot, chat_id, f"{caption}\n\n(⚠️)")
+            return
+
+    await send_long_text(bot, chat_id, caption)
+
+
+def get_site_url(request_host: str) -> str:
+    if SITE_URL_ENV:
+        return SITE_URL_ENV
+    if request_host:
+        return f"https://{request_host}"
+    return ""
+
+
+# --------------------------------------------------------------------------
+# ASOSIY LOGIKA
+# --------------------------------------------------------------------------
+
+async def handle_update(bot: Bot, update: Update, request_host: str):
+    telegram_lang_code = update.effective_user.language_code if update.effective_user else None
+
+    # --- Callback (menyu tugmasi yoki til tanlash) ---
+    if update.callback_query:
+        cq = update.callback_query
+        chat_id = cq.message.chat_id
+        data = cq.data or ""
+
+        if data.startswith("setlang:"):
+            _, lang, script = data.split(":")
+            fb_update(f"sessions/{chat_id}", {"lang": lang, "script": script})
+            await cq.answer()
+            await clear_tracked_history(bot, chat_id)
+            await tracked_send_message(bot, chat_id, ui(lang, script, "adapted"))
+            await send_menu(bot, chat_id, lang, script)
+            return
+
+        lang, script, _ = await get_session_lang(chat_id, telegram_lang_code)
+        products = fb_get("products") or {}
+        product = products.get(data)
+        await cq.answer()
+        if product:
+            await send_product(bot, chat_id, product, lang, script)
+        else:
+            await tracked_send_message(bot, chat_id, ui(lang, script, "product_removed"))
+        return
+
+    message = update.message
+    if not message:
+        return
+
+    chat_id = message.chat_id
+    text = (message.text or message.caption or "").strip()
+
+    session = fb_get(f"sessions/{chat_id}") or {}
+    is_admin = bool(session.get("admin", False))
+    step = session.get("step")
+
+    # ---------------- BUYRUQLAR ----------------
+
+    if text.startswith("/start"):
+        fb_update(f"sessions/{chat_id}", {"step": None})
+        lang, script, _ = await get_session_lang(chat_id, telegram_lang_code)
+        await send_menu(bot, chat_id, lang, script)
+        return
+
+    if text.startswith("/til") or text.startswith("/language") or text.startswith("/язык"):
+        lang, script, _ = await get_session_lang(chat_id, telegram_lang_code)
+        await bot.send_message(chat_id, ui(lang, script, "choose_lang"), reply_markup=build_lang_menu())
+        return
+
+    if text.startswith("/admin"):
+        if is_admin:
+            await send_admin_link(bot, chat_id, request_host)
+        else:
+            fb_set(f"sessions/{chat_id}", {"admin": False, "step": "await_id"})
+            await bot.send_message(chat_id, "🔑 Admin ID kiriting:")
+        await try_delete(bot, chat_id, message.message_id)
+        return
+
+    if text.startswith("/logout"):
+        fb_set(f"sessions/{chat_id}", {"admin": False, "step": None})
+        await bot.send_message(chat_id, "Admin sessiyasi tugatildi.")
+        return
+
+    # ---------------- LOGIN BOSQICHLARI ----------------
+
+    if step == "await_id":
+        fb_update(f"sessions/{chat_id}", {"step": "await_password", "temp_id": text})
+        await bot.send_message(chat_id, "🔒 Parolni kiriting:")
+        await try_delete(bot, chat_id, message.message_id)
+        return
+
+    if step == "await_password":
+        entered_id = session.get("temp_id", "")
+        if entered_id == ADMIN_LOGIN_ID and text == ADMIN_LOGIN_PASSWORD:
+            fb_set(f"sessions/{chat_id}", {"admin": True, "step": None})
+            await send_admin_link(bot, chat_id, request_host)
+        else:
+            fb_set(f"sessions/{chat_id}", {"admin": False, "step": None})
+            await bot.send_message(chat_id, "❌ ID yoki parol noto'g'ri.")
+        await try_delete(bot, chat_id, message.message_id)
+        return
+
+    # ---------------- "MENGA MOSLASH" TRIGGERI ----------------
+
+    if text and not text.startswith("/"):
+        normalized = text.lower()
+        if any(trigger in normalized for trigger in ADAPT_TRIGGERS):
+            _, detected = translate_google(text, "en", source_lang="auto")
+            if detected:
+                new_script = "cyrillic" if (detected == "uz" and contains_cyrillic(text)) else "latin"
+                fb_update(f"sessions/{chat_id}", {"lang": detected, "script": new_script})
+                await clear_tracked_history(bot, chat_id)
+                await tracked_send_message(bot, chat_id, ui(detected, new_script, "adapted"))
+                await send_menu(bot, chat_id, detected, new_script)
+                return
+
+    # ---------------- ODDIY MATN -> MAHSULOT QIDIRISH ----------------
+
+    if text and not text.startswith("/"):
+        lang, script, _ = await get_session_lang(chat_id, telegram_lang_code)
+        products = fb_get("products") or {}
+
+        match_key = find_best_product(text, products)
+        if not match_key and lang != "uz":
+            # Foydalanuvchi o'z tilida qidirgan bo'lishi mumkin - o'zbekchaga tarjima qilib qayta urinamiz
+            translated_query, _ = translate_google(text, "uz", source_lang="auto")
+            if translated_query:
+                match_key = find_best_product(translated_query, products)
+
+        if match_key:
+            await send_product(bot, chat_id, products[match_key], lang, script)
+        else:
+            await tracked_send_message(bot, chat_id, ui(lang, script, "not_found"))
+        return
+
+
+async def send_admin_link(bot: Bot, chat_id: int, request_host: str):
+    token = secrets.token_urlsafe(24)
+    fb_set(f"admin_tokens/{token}", {"created": int(time.time() * 1000)})
+
+    site_url = get_site_url(request_host)
+    if not site_url:
+        await bot.send_message(chat_id, "❌ Sayt manzili sozlanmagan (SITE_URL).")
+        return
+
+    link = f"{site_url}/admin?token={token}"
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔐 Admin panelni ochish", url=link)]])
+    await bot.send_message(chat_id, "✅ Tasdiqlandi. Admin panelni oching:", reply_markup=kb)
+
+
+# --------------------------------------------------------------------------
+# VERCEL ENTRYPOINT
+# --------------------------------------------------------------------------
+
+async def process(data: dict, request_host: str):
+    bot = Bot(token=BOT_TOKEN)
+    async with bot:
+        update = Update.de_json(data, bot)
+        if update:
+            await handle_update(bot, update, request_host)
+
+
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b"{}"
+            data = json.loads(body or b"{}")
+            request_host = self.headers.get("Host", "")
+            asyncio.run(process(data, request_host))
+        except Exception as e:
+            print("Webhook xatolik:", e)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot ishlayapti.")
