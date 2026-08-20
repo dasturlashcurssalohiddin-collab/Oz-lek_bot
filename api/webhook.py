@@ -114,9 +114,23 @@ LAT_SINGLE_TO_CYR = {
 
 
 def transliterate(text: str) -> str:
-    """Kirillcha matnni lotinga o'giradi (qidiruv uchun normallashtirish)."""
+    """Kirillcha matnni lotinga o'giradi (qidiruv uchun normallashtirish, kichik harflarga tushiradi)."""
     text = text.lower()
     return "".join(CYR_TO_LAT.get(ch, ch) for ch in text)
+
+
+def cyrillic_to_latin_display(text: str) -> str:
+    """Kirillcha matnni lotinga o'giradi, katta-kichik harflarni imkon qadar saqlab qoladi."""
+    if not text:
+        return text
+    out = []
+    for ch in text:
+        lower_ch = ch.lower()
+        mapped = CYR_TO_LAT.get(lower_ch, ch)
+        if ch.isupper() and mapped:
+            mapped = mapped[0].upper() + mapped[1:] if len(mapped) > 1 else mapped.upper()
+        out.append(mapped)
+    return "".join(out)
 
 
 def latin_to_cyrillic(text: str) -> str:
@@ -189,7 +203,7 @@ def translate_cached(text: str, target_lang: str) -> str:
     cached = fb_get(cache_key)
     if isinstance(cached, dict) and cached.get("t"):
         return cached["t"]
-    translated, _ = translate_google(text, target_lang, source_lang="uz")
+    translated, _ = translate_google(text, target_lang, source_lang="auto")
     if translated:
         fb_set(cache_key, {"t": translated})
         return translated
@@ -197,11 +211,16 @@ def translate_cached(text: str, target_lang: str) -> str:
 
 
 def display_text(source_text: str, lang: str, script: str) -> str:
-    """Mahsulot nomi/tavsifini foydalanuvchi tiliga/yozuviga moslab qaytaradi."""
+    """Mahsulot nomi/tavsifini foydalanuvchi tiliga/yozuviga moslab qaytaradi.
+    Manba matn lotin yoki kirill bo'lishidan qat'i nazar, kerakli tomonga o'giradi."""
     if not source_text:
         return source_text
     if lang == "uz":
-        return latin_to_cyrillic(source_text) if script == "cyrillic" else source_text
+        source_is_cyrillic = contains_cyrillic(source_text)
+        if script == "cyrillic":
+            return source_text if source_is_cyrillic else latin_to_cyrillic(source_text)
+        else:  # lotin so'ralgan
+            return cyrillic_to_latin_display(source_text) if source_is_cyrillic else source_text
     return translate_cached(source_text, lang)
 
 
