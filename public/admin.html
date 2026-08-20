@@ -114,7 +114,7 @@
   #add-view { display: none; }
   .add-grid {
     display: grid;
-    grid-template-columns: 1fr 260px;
+    grid-template-columns: 1fr 240px;
     min-height: calc(100vh - 84px);
   }
   @media (max-width: 640px) {
@@ -150,25 +150,35 @@
     outline: none;
     min-height: 260px;
   }
-  .add-right {
-    background: var(--gray-bg);
+  .add-right-col {
+    display: flex;
+    flex-direction: column;
     border-left: 2px solid var(--border);
+  }
+  @media (max-width: 640px) {
+    .add-right-col { border-left: none; border-top: 2px solid var(--border); }
+  }
+  .media-box {
+    background: var(--gray-bg);
+    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 14px;
-    padding: 20px;
+    gap: 10px;
+    padding: 18px;
     cursor: pointer;
     text-align: center;
   }
-  .add-right img {
+  .media-box:first-child { border-bottom: 2px solid var(--border); }
+  .media-box img, .media-box video {
     max-width: 100%;
-    max-height: 220px;
+    max-height: 140px;
     border-radius: 6px;
     display: none;
   }
-  .img-icon { font-size: 44px; }
+  .img-icon { font-size: 38px; }
+  #videoLabel { color: #666; font-size: 13px; }
 
   .bottom-bar {
     display: flex;
@@ -228,11 +238,19 @@
         <div class="hint">dori nomi yozilsa menyuda ham shu nom ko'rinadi. ma'lumot qismiga joy kam ko'rinadi, lekin cheksiz yozish mumkin.</div>
         <textarea id="desc" placeholder="Ma'lumot kiriting"></textarea>
       </div>
-      <div class="add-right" id="imgPicker">
-        <img id="preview">
-        <div class="img-icon" id="imgIcon">🖼️</div>
-        <div id="imgLabel">Rasm qo'shing</div>
-        <input type="file" id="fileInput" accept="image/*" style="display:none;">
+      <div class="add-right-col">
+        <div class="media-box" id="imgPicker">
+          <img id="preview">
+          <div class="img-icon" id="imgIcon">🖼️</div>
+          <div id="imgLabel">Rasm qo'shing</div>
+          <input type="file" id="fileInput" accept="image/*" style="display:none;">
+        </div>
+        <div class="media-box" id="videoPicker">
+          <video id="videoPreview" controls></video>
+          <div class="img-icon" id="videoIcon">🎬</div>
+          <div id="videoLabel">Video qo'shing (ixtiyoriy)</div>
+          <input type="file" id="videoInput" accept="video/*" style="display:none;">
+        </div>
       </div>
     </div>
     <div id="status-msg"></div>
@@ -297,6 +315,8 @@ async function checkAccess() {
     gate.textContent = "Sessiya tugagan yoki noto'g'ri. Telegram botga qaytib /admin yozing.";
     return false;
   }
+  // Bir martalik havola: tekshirilgach darhol o'chiriladi, qayta ishlatib bo'lmaydi.
+  await fbDelete(`admin_tokens/${token}`);
   gate.style.display = "none";
   document.getElementById("app").style.display = "block";
   document.getElementById("addFab").style.display = "block";
@@ -368,6 +388,14 @@ function renderToolbar() {
 let pickedImageBase64 = null;
 let editingKey = null; // null = yangi mahsulot qo'shish, aks holda tahrirlash
 
+function resetVideoPicker() {
+  pickedVideoBase64 = null;
+  document.getElementById("videoInput").value = "";
+  document.getElementById("videoPreview").style.display = "none";
+  document.getElementById("videoIcon").style.display = "block";
+  document.getElementById("videoLabel").textContent = "Video qo'shing (ixtiyoriy)";
+}
+
 function openAddView() {
   editingKey = null;
   document.getElementById("list-view").style.display = "none";
@@ -381,6 +409,7 @@ function openAddView() {
   document.getElementById("preview").style.display = "none";
   document.getElementById("imgIcon").style.display = "block";
   document.getElementById("imgLabel").textContent = "Rasm qo'shing";
+  resetVideoPicker();
 }
 
 function openEditView(key) {
@@ -406,9 +435,20 @@ function openEditView(key) {
     document.getElementById("imgIcon").style.display = "block";
     document.getElementById("imgLabel").textContent = "Rasm qo'shing";
   }
+
+  resetVideoPicker();
+  pickedVideoBase64 = product.video_base64 || null;
+  if (pickedVideoBase64) {
+    const vp = document.getElementById("videoPreview");
+    vp.src = "data:video/mp4;base64," + pickedVideoBase64;
+    vp.style.display = "block";
+    document.getElementById("videoIcon").style.display = "none";
+    document.getElementById("videoLabel").textContent = "Videoni almashtirish uchun bosing";
+  }
 }
 
 document.getElementById("imgPicker").onclick = () => document.getElementById("fileInput").click();
+document.getElementById("videoPicker").onclick = () => document.getElementById("videoInput").click();
 
 document.getElementById("fileInput").onchange = (e) => {
   const file = e.target.files[0];
@@ -442,6 +482,33 @@ document.getElementById("fileInput").onchange = (e) => {
 
 document.getElementById("cancelBtn").onclick = loadList;
 
+let pickedVideoBase64 = null;
+const MAX_VIDEO_MB = 15;
+
+document.getElementById("videoInput").onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file || !file.type.startsWith("video/")) return;
+
+  if (file.size > MAX_VIDEO_MB * 1024 * 1024) {
+    alert(`Video hajmi juda katta. ${MAX_VIDEO_MB}MB dan kichik video tanlang.`);
+    e.target.value = "";
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const dataUrl = ev.target.result;
+    pickedVideoBase64 = dataUrl.split(",")[1];
+
+    const preview = document.getElementById("videoPreview");
+    preview.src = dataUrl;
+    preview.style.display = "block";
+    document.getElementById("videoIcon").style.display = "none";
+    document.getElementById("videoLabel").textContent = "Video tanlandi ✅";
+  };
+  reader.readAsDataURL(file);
+};
+
 document.getElementById("saveBtn").onclick = async () => {
   const name = document.getElementById("name").value.trim();
   const desc = document.getElementById("desc").value.trim();
@@ -461,7 +528,8 @@ document.getElementById("saveBtn").onclick = async () => {
   const ok = await fbSet(`products/${key}`, {
     name: name,
     description: desc,
-    image_base64: pickedImageBase64 || null
+    image_base64: pickedImageBase64 || null,
+    video_base64: pickedVideoBase64 || null
   });
 
   document.getElementById("saveBtn").disabled = false;
